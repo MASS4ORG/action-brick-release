@@ -1,0 +1,102 @@
+name: Brick verify
+
+# Called from a brick repository on pushes and pull requests:
+#
+#   on:
+#     push:
+#       branches: [main]
+#     pull_request:
+#   jobs:
+#     brick:
+#       uses: MASS4ORG/action-brick-release/.github/workflows/verify.yml@v1
+#       with:
+#         source-tests: Brick~/Tests/My.Brick.Tests/My.Brick.Tests.csproj
+#
+# Builds what a release would, with the same pinned CLI, and runs the brick's own tests against Turian's main branch.
+# Needs no secrets and publishes nothing.
+on:
+  workflow_call:
+    inputs:
+      brick-path:
+        description: Brick folder in the calling repository
+        type: string
+        default: .
+      precast:
+        description: Compile assemblies before packing, which also proves they build
+        type: boolean
+        default: true
+      twin:
+        description: Also bake the brick and pack its twin <id>.bake
+        type: boolean
+        default: true
+      turian-version:
+        description: turian-cli version to pack with; empty for the one release.yml pins
+        type: string
+        default: ""
+      source-tests:
+        description: Test project under the brick; empty when the brick has none
+        type: string
+        default: ""
+      turian-ref:
+        description: Turian branch or tag the source tests build against
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  # The brick's own tests, built against Turian's sources checked out beside it as on a workstation.
+  source-tests:
+    if: inputs.source-tests != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: Bricks/brick
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: MASS4ORG/Turian
+          ref: ${{ inputs.turian-ref }}
+          path: Turian
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: Turian/global.json
+
+      # From Turian, whose global.json selects the Microsoft.Testing.Platform runner that --project needs.
+      - name: Build and test the sources
+        working-directory: Turian
+        run: dotnet test --project "../Bricks/brick/${{ inputs.brick-path }}/${{ inputs.source-tests }}" -p:SkipShaders=true
+
+  brick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build and test as a consumer
+        id: build
+        uses: MASS4ORG/action-brick-build@v1
+        with:
+          brick-path: ${{ inputs.brick-path }}
+          precast: ${{ inputs.precast }}
+          twin: ${{ inputs.twin }}
+          # The same image release.yml pins, so verification packs what a release would.
+          image: >-
+            ${{ inputs.turian-version != '' && format('ghcr.io/mass4org/turian-cli:{0}', inputs.turian-version)
+            || 'ghcr.io/mass4org/turian-cli:3.2.0@sha256:f6a1e0379084b1b8c8b93d938b989b4d649a90766be8b5e6427b2ee40100050c' }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: brick
+          path: |
+            ${{ steps.build.outputs.directory }}/*.brick
+            ${{ steps.build.outputs.directory }}/build.json
+          if-no-files-found: error

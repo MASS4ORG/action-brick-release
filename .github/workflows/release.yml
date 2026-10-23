@@ -1,0 +1,257 @@
+name: Brick release
+
+# Called from a brick repository on a release tag:
+#
+#   on:
+#     push:
+#       tags: ["v*"]
+#   jobs:
+#     release:
+#       uses: MASS4ORG/action-brick-release/.github/workflows/release.yml@v1
+#       with:
+#         twin: true
+#
+# Builds, tests and qualifies the brick with no secrets, then signs and uploads it in a job of its own, the only one
+# bound to the protected brick-production environment and the only one that runs no brick code.
+on:
+  workflow_call:
+    inputs:
+      brick-path:
+        description: Brick folder in the calling repository
+        type: string
+        default: .
+      precast:
+        description: Compile assemblies before packing
+        type: boolean
+        default: true
+      twin:
+        description: Bake the brick and release its twin <id>.bake beside it
+        type: boolean
+        default: true
+      turian-version:
+        description: Exact turian-cli version to release with, e.g. 3.3.1; empty for the one this workflow pins
+        type: string
+        default: ""
+      source-tests:
+        description: Test project under the brick, built against the Turian release of the CLI; empty when the brick has none
+        type: string
+        default: ""
+      test-command:
+        description: Additional brick tests run on the runner; BRICK_ARCHIVE identifies the exact archive to test
+        type: string
+        default: ""
+      store-url:
+        description: Asset store the release is uploaded to; MASS4_BRICKS_STORE_TOKEN must belong to it
+        type: string
+        default: https://bricks.mass4.org
+
+permissions:
+  contents: read
+
+concurrency:
+  group: brick-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      version: ${{ steps.image.outputs.version }}
+    steps:
+      # A release never resolves a moving tag. Version tags of turian-cli are never pushed twice, so the same version
+      # always resolves to the same digest and a re-run tag packs the same bytes the store already holds.
+      - name: Resolve the CLI image
+        id: image
+        shell: bash
+        env:
+          REQUESTED: ${{ inputs.turian-version }}
+          # The CLI every brick releases with unless it asks for another version. Moved by a minor release of this
+          # workflow; verify.yml pins the same image.
+          PINNED_IMAGE: ghcr.io/mass4org/turian-cli:3.2.0@sha256:f6a1e0379084b1b8c8b93d938b989b4d649a90766be8b5e6427b2ee40100050c
+        run: |
+          if [[ -z "$REQUESTED" ]]; then
+            reference="$PINNED_IMAGE"
+          elif [[ "$REQUESTED" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            reference="ghcr.io/mass4org/turian-cli:$REQUESTED"
+          else
+            echo "::error::turian-version must be an exact version such as 3.3.1, not \"$REQUESTED\"."
+            exit 1
+          fi
+          docker pull -q "$reference" > /dev/null
+          image=$(docker image inspect --format '{{ range .RepoDigests }}{{ println . }}{{ end }}' "$reference" \
+            | grep -m1 '^ghcr\.io/mass4org/turian-cli@sha256:')
+          # Later jobs pull it by digest, so make sure the registry serves it.
+          docker pull -q "$image" > /dev/null
+          version=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$image")
+          if ! docker run --rm --entrypoint sh "$image" -c 'command -v brick-release' > /dev/null; then
+            echo "::error::turian-cli $version has no brick-release; release with 3.3.0 or later."
+            exit 1
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # The brick's own tests need Turian's sources: those of the release the CLI was built from. No secrets here.
+  source-tests:
+    needs: image
+    if: inputs.source-tests != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: Bricks/brick
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: MASS4ORG/Turian
+          ref: v${{ needs.image.outputs.version }}
+          path: Turian
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: Turian/global.json
+
+      # From Turian, whose global.json selects the Microsoft.Testing.Platform runner that --project needs.
+      - name: Build and test the sources
+        working-directory: Turian
+        run: dotnet test --project "../Bricks/brick/${{ inputs.brick-path }}/${{ inputs.source-tests }}" -p:SkipShaders=true
+
+  qualify:
+    needs: [image, source-tests]
+    if: >-
+      always() && needs.image.result == 'success'
+      && (needs.source-tests.result == 'success' || needs.source-tests.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      qualification: ${{ steps.identity.outputs.qualification }}
+      archive: ${{ steps.identity.outputs.archive }}
+      twin-qualification: ${{ steps.identity.outputs.twin-qualification }}
+      twin-archive: ${{ steps.identity.outputs.twin-archive }}
+    env:
+      TURIAN_CLI_IMAGE: ${{ needs.image.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Build and test as a consumer
+        id: build
+        uses: MASS4ORG/action-brick-build@v1
+        with:
+          brick-path: ${{ inputs.brick-path }}
+          precast: ${{ inputs.precast }}
+          twin: ${{ inputs.twin }}
+          image: ${{ needs.image.outputs.image }}
+
+      - name: Bind qualification to archive bytes
+        id: identity
+        shell: bash
+        env:
+          PACKED: ${{ steps.build.outputs.directory }}
+          ARCHIVE: ${{ steps.build.outputs.archive }}
+          TWIN_ARCHIVE: ${{ steps.build.outputs.twin-archive }}
+        run: |
+          # The tool writes its outputs into the archive folder, which the container sees; they are appended to the
+          # job's here.
+          release() {
+            docker run --rm --user "$(id -u):$(id -g)" -e GITHUB_OUTPUT=/packed/outputs \
+              -v "$PACKED:/packed" --entrypoint brick-release "$TURIAN_CLI_IMAGE" "$@"
+          }
+          release qualify "/packed/$ARCHIVE" "$GITHUB_REF_NAME" "$GITHUB_SHA" /packed/qualification.json --github-output
+          if [[ -n "$TWIN_ARCHIVE" ]]; then
+            release qualify "/packed/$TWIN_ARCHIVE" "$GITHUB_REF_NAME" "$GITHUB_SHA" /packed/twin-qualification.json \
+              --github-output twin-
+          fi
+          cat "$PACKED/outputs" >> "$GITHUB_OUTPUT"
+          rm "$PACKED/outputs"
+
+      - name: Run the brick's own archive tests
+        if: inputs.test-command != ''
+        shell: bash
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+          BRICK_ARCHIVE: ${{ steps.build.outputs.directory }}/${{ steps.identity.outputs.archive }}
+        run: bash -euo pipefail -c "$TEST_COMMAND"
+
+      - name: Check tested bytes are unchanged
+        shell: bash
+        env:
+          PACKED: ${{ steps.build.outputs.directory }}
+          ARCHIVE: ${{ steps.identity.outputs.archive }}
+          QUALIFICATION: ${{ steps.identity.outputs.qualification }}
+          TWIN_ARCHIVE: ${{ steps.identity.outputs.twin-archive }}
+          TWIN_QUALIFICATION: ${{ steps.identity.outputs.twin-qualification }}
+        run: |
+          validate() {
+            docker run --rm -v "$PACKED:/packed:ro" --entrypoint brick-release "$TURIAN_CLI_IMAGE" \
+              validate "/packed/$1" "/packed/$2"
+          }
+          printf '%s\n' "$QUALIFICATION" > "$PACKED/qualification.json"
+          validate "$ARCHIVE" qualification.json
+          if [[ -n "$TWIN_ARCHIVE" ]]; then
+            printf '%s\n' "$TWIN_QUALIFICATION" > "$PACKED/twin-qualification.json"
+            validate "$TWIN_ARCHIVE" twin-qualification.json
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: qualified-brick
+          path: |
+            ${{ steps.build.outputs.directory }}/*.brick
+            ${{ steps.build.outputs.directory }}/*qualification.json
+            ${{ steps.build.outputs.directory }}/build.json
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: [image, qualify]
+    # A skipped source-tests would otherwise skip this job too, as it skips every job after it.
+    if: ${{ !cancelled() && needs.qualify.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: brick-production
+    steps:
+      # Only the pinned image runs here; no brick code or consumer tests execute with secrets.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: qualified-brick
+          path: qualified
+
+      - name: Restore the qualifications the archives were tested with
+        shell: bash
+        env:
+          QUALIFICATION: ${{ needs.qualify.outputs.qualification }}
+          TWIN_QUALIFICATION: ${{ needs.qualify.outputs.twin-qualification }}
+        run: |
+          printf '%s\n' "$QUALIFICATION" > qualified/qualification.json
+          [[ -z "$TWIN_QUALIFICATION" ]] || printf '%s\n' "$TWIN_QUALIFICATION" > qualified/twin-qualification.json
+
+      - uses: MASS4ORG/action-brick-publish@v1
+        with:
+          directory: qualified
+          archive: ${{ needs.qualify.outputs.archive }}
+          qualification: qualification.json
+          twin-archive: ${{ needs.qualify.outputs.twin-archive }}
+          twin-qualification: ${{ needs.qualify.outputs.twin-archive != '' && 'twin-qualification.json' || '' }}
+          image: ${{ needs.image.outputs.image }}
+          store-url: ${{ inputs.store-url }}
+          signing-key: ${{ secrets.MASS4_BRICKS_CI_SIGNING_KEY }}
+          public-key: ${{ vars.MASS4_BRICKS_CI_PUBLIC_KEY }}
+          store-token: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+
+      # The provenance of this release: the exact CLI image and archive hashes (build.json) and the signed metadata.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: brick-release-provenance
+          path: |
+            qualified/build.json
+            qualified/*release.json
+          if-no-files-found: error
