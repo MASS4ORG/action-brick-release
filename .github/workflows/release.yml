@@ -70,7 +70,7 @@ jobs:
           REQUESTED: ${{ inputs.turian-version }}
           # The CLI every brick releases with unless it asks for another version. Moved by a minor release of this
           # workflow; verify.yml pins the same image.
-          PINNED_IMAGE: ghcr.io/mass4org/turian-cli:3.2.0@sha256:f6a1e0379084b1b8c8b93d938b989b4d649a90766be8b5e6427b2ee40100050c
+          PINNED_IMAGE: ghcr.io/mass4org/turian-cli:3.3.0@sha256:88dd379139cf1718368ff478ae6f5ed37c0333d26ddb2b2ce2bcabda4ae8406d
         run: |
           if [[ -z "$REQUESTED" ]]; then
             reference="$PINNED_IMAGE"
