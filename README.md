@@ -37,6 +37,8 @@ The caller explicitly forwards the two secret names shown above. Their values st
 
 The repository's `brick-production` environment holds `MASS4_BRICKS_CI_SIGNING_KEY` and `MASS4_BRICKS_STORE_TOKEN` as secrets and `MASS4_BRICKS_CI_PUBLIC_KEY` as a variable. Restrict it to `v*` tags, with a required reviewer and no administrator bypass.
 
+Before the first tag, a Store administrator must authorize the CI public key in **both** registry signature trust and namespace publisher authority. Import it additively through `Registry:TrustedPublicKeys`/`--initialize` and verify its fingerprint in `/v1/keys`; separately register it under `org.mass4` at `/account/namespaces`. Neither step performs the other. Apply the same two checks to the Tier 1 key for emergency manual releases, with its private half remaining on the owner's workstation. Preserve existing registry keys unless a separate rotation/revocation is approved. Clients also need independent signing-key trust.
+
 | Input            | Default                    | Description                                                                   |
 |------------------|----------------------------|-------------------------------------------------------------------------------|
 | `brick-path`     | `.`                        | Brick folder in the repository                                                |
@@ -46,6 +48,30 @@ The repository's `brick-production` environment holds `MASS4_BRICKS_CI_SIGNING_K
 | `source-tests`   |                            | Test project under the brick                                                  |
 | `test-command`   |                            | Further tests on the runner; `BRICK_ARCHIVE` is the exact archive             |
 | `store-url`      | `https://bricks.mass4.org` | Asset store to upload to                                                      |
+
+### Publish readiness
+
+The `publish` job runs [publish readiness](https://github.com/MASS4ORG/action-brick-publish#publish-readiness) before it signs: image pin, registry signature trust, namespace publisher authority, token namespace, the store's provenance read and curator advisories, each failure naming its layer. Run the same checks before tagging, on a schedule and by hand, with `.github/workflows/brick-readiness.yml`:
+
+```yaml
+name: Brick readiness
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    uses: MASS4ORG/action-brick-release/.github/workflows/readiness.yml@v1
+    secrets:
+      MASS4_BRICKS_STORE_TOKEN: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+```
+
+It checks the manifest's id and version against the CLI this workflow pins, reads only the publish token and the `MASS4_BRICKS_CI_PUBLIC_KEY` variable, and never requests the signing key. Its job selects the `environment` input, `brick-production` by default; a scheduled run comes from the default branch, so that environment's tag restriction and required reviewer apply to it. Take `brick-path`, `twin` and `store-url` as in a release.
 
 ### Re-running a tag
 

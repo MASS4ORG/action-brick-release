@@ -1,0 +1,77 @@
+name: Brick publish readiness
+
+# Called from a brick repository on a schedule and by hand, before tagging:
+#
+#   on:
+#     schedule:
+#       - cron: "17 6 * * *"
+#     workflow_dispatch:
+#   jobs:
+#     readiness:
+#       uses: MASS4ORG/action-brick-release/.github/workflows/readiness.yml@v1
+#       secrets:
+#         MASS4_BRICKS_STORE_TOKEN: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+#
+# Runs the checks the release's publish job runs before signing, read-only, with the publish token and the public key
+# only. No brick code runs and the signing key is never requested.
+on:
+  workflow_call:
+    secrets:
+      MASS4_BRICKS_STORE_TOKEN:
+        description: Publish token stored in the calling repository's environment
+        required: true
+    inputs:
+      brick-path:
+        description: Brick folder in the calling repository
+        type: string
+        default: .
+      twin:
+        description: Also read the store record of the twin variant the pinned CLI bakes
+        type: boolean
+        default: true
+      store-url:
+        description: Asset store the release would be uploaded to
+        type: string
+        default: https://bricks.mass4.org
+      environment:
+        description: Environment holding MASS4_BRICKS_STORE_TOKEN and the MASS4_BRICKS_CI_PUBLIC_KEY variable
+        type: string
+        default: brick-production
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment }}
+    steps:
+      # Only the manifest is read; nothing from the brick runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Variants a release would publish
+        id: variants
+        shell: bash
+        env:
+          TWIN: ${{ inputs.twin }}
+          # The CLI release.yml pins; check.yml keeps the two identical.
+          PINNED_IMAGE: ghcr.io/mass4org/turian-cli:3.4.0@sha256:c8ea27808fd2f1d12012e9d78c22d3a11e020216f9a605e8fb93f53bbdef367f
+        run: |
+          version=${PINNED_IMAGE#*:}
+          version=${version%@*}
+          variants=source
+          [[ "$TWIN" != true ]] || variants+=" turian${version%.*}"
+          echo "variants=$variants" >> "$GITHUB_OUTPUT"
+          echo "image=$PINNED_IMAGE" >> "$GITHUB_OUTPUT"
+
+      - uses: MASS4ORG/action-brick-publish/readiness@v1
+        with:
+          brick-path: ${{ inputs.brick-path }}
+          variants: ${{ steps.variants.outputs.variants }}
+          image: ${{ steps.variants.outputs.image }}
+          store-url: ${{ inputs.store-url }}
+          public-key: ${{ vars.MASS4_BRICKS_CI_PUBLIC_KEY }}
+          store-token: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}

@@ -16,15 +16,16 @@ jobs:
         with:
           persist-credentials: false
 
-      # release.yml and verify.yml must pin the same CLI, so a brick verifies with what it releases with.
+      # release.yml, verify.yml and readiness.yml must pin the same CLI, so a brick verifies and checks readiness with
+      # what it releases with.
       - name: One pinned CLI
         shell: bash
         run: |
-          pins=$(grep -ohE 'ghcr\.io/mass4org/turian-cli:[0-9.]+@sha256:[0-9a-f]{64}' .github/workflows/release.yml .github/workflows/verify.yml | sort -u)
+          pins=$(grep -ohE 'ghcr\.io/mass4org/turian-cli:[0-9.]+@sha256:[0-9a-f]{64}' .github/workflows/release.yml .github/workflows/verify.yml .github/workflows/readiness.yml | sort -u)
           echo "$pins"
-          [[ $(wc -l <<< "$pins") == 1 && -n "$pins" ]] || { echo "::error::release.yml and verify.yml pin different CLIs."; exit 1; }
+          [[ $(wc -l <<< "$pins") == 1 && -n "$pins" ]] || { echo "::error::release.yml, verify.yml and readiness.yml pin different CLIs."; exit 1; }
 
       - name: Lint the workflows
         uses: docker://rhysd/actionlint:1.7.12
         with:
-          args: -color .github/workflows/release.yml .github/workflows/verify.yml
+          args: -color .github/workflows/release.yml .github/workflows/verify.yml .github/workflows/readiness.yml
