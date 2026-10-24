@@ -26,7 +26,7 @@ on:
         type: boolean
         default: true
       twin:
-        description: Also bake the brick and pack its twin <id>.bake
+        description: Also bake the brick and pack its twin, a variant of the same id and version
         type: boolean
         default: true
       turian-version:

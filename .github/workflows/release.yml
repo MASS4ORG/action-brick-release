@@ -25,7 +25,7 @@ on:
         type: boolean
         default: true
       twin:
-        description: Bake the brick and release its twin <id>.bake beside it
+        description: Bake the brick and release its twin beside it, a variant of the same id and version
         type: boolean
         default: true
       turian-version:
@@ -246,12 +246,3 @@ jobs:
           signing-key: ${{ secrets.MASS4_BRICKS_CI_SIGNING_KEY }}
           public-key: ${{ vars.MASS4_BRICKS_CI_PUBLIC_KEY }}
           store-token: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
-
-      # The provenance of this release: the exact CLI image and archive hashes (build.json) and the signed metadata.
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: brick-release-provenance
-          path: |
-            qualified/build.json
-            qualified/*release.json
-          if-no-files-found: error

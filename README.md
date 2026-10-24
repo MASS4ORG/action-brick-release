@@ -36,7 +36,7 @@ The repository's `brick-production` environment holds `MASS4_BRICKS_CI_SIGNING_K
 |------------------|----------------------------|-------------------------------------------------------------------------------|
 | `brick-path`     | `.`                        | Brick folder in the repository                                                |
 | `precast`        | `true`                     | Compile assemblies before packing                                             |
-| `twin`           | `true`                     | Release the baked twin `<id>.bake` beside the brick                           |
+| `twin`           | `true`                     | Release the baked twin beside the brick, a variant of its id and version      |
 | `turian-version` |                            | Exact turian-cli version, e.g. `3.3.1`; empty for the one this workflow pins  |
 | `source-tests`   |                            | Test project under the brick                                                  |
 | `test-command`   |                            | Further tests on the runner; `BRICK_ARCHIVE` is the exact archive             |
@@ -44,7 +44,9 @@ The repository's `brick-production` environment holds `MASS4_BRICKS_CI_SIGNING_K
 
 ### Re-running a tag
 
-A release never resolves a moving tag: it uses the version this workflow pins, or an exact one the caller names, and turian-cli version tags are never pushed twice. So a re-run resolves the same digest, packs the same bytes, and the store accepts the identical upload again. The `brick-release-provenance` artifact records the digest, archive hashes and signed metadata.
+A release never resolves a moving tag: it uses the version this workflow pins, or an exact one the caller names, and turian-cli version tags are never pushed twice. So a re-run resolves the same digest, packs the same bytes, and the store accepts the identical upload again.
+
+The store is the record of each release's provenance: the signed release JSON carries the image digest and Turian version as its unsigned `build`, and the store keeps the first `build` and source commit it received. Before uploading, the publish job reads that record back: it refuses different bytes, a re-run built by another image than the recorded one, and any build a curator advisory rejects. Identical bytes with other metadata are accepted, keep the first record and show up as warnings.
 
 ## Verify
 
