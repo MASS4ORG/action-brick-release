@@ -19,6 +19,9 @@ permissions:
 jobs:
   release:
     uses: MASS4ORG/action-brick-release/.github/workflows/release.yml@v1
+    secrets:
+      MASS4_BRICKS_CI_SIGNING_KEY: ${{ secrets.MASS4_BRICKS_CI_SIGNING_KEY }}
+      MASS4_BRICKS_STORE_TOKEN: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
     with:
       source-tests: Brick~/Tests/My.Brick.Tests/My.Brick.Tests.csproj
 ```
@@ -29,6 +32,8 @@ jobs:
 | `source-tests` | none    | Builds and runs the brick's tests against the Turian release of that CLI                              |
 | `qualify`      | none    | Builds, consumer-tests and qualifies the archives, binding their bytes to the tag and commit          |
 | `publish`      | yes     | In the `brick-production` environment: checks the bytes, signs and uploads; runs no brick code        |
+
+The caller explicitly forwards the two secret names shown above. Their values stay in the calling repository's environment and are available to the `publish` job after its environment rules pass; the public key stays an environment variable. Keep `secrets: inherit` out of the caller. The workflow declares these names as optional for compatibility; signing and uploading require nonempty values.
 
 The repository's `brick-production` environment holds `MASS4_BRICKS_CI_SIGNING_KEY` and `MASS4_BRICKS_STORE_TOKEN` as secrets and `MASS4_BRICKS_CI_PUBLIC_KEY` as a variable. Restrict it to `v*` tags, with a required reviewer and no administrator bypass.
 

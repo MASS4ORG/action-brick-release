@@ -8,6 +8,9 @@ name: Brick release
 #   jobs:
 #     release:
 #       uses: MASS4ORG/action-brick-release/.github/workflows/release.yml@v1
+#       secrets:
+#         MASS4_BRICKS_CI_SIGNING_KEY: ${{ secrets.MASS4_BRICKS_CI_SIGNING_KEY }}
+#         MASS4_BRICKS_STORE_TOKEN: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
 #       with:
 #         twin: true
 #
@@ -15,6 +18,13 @@ name: Brick release
 # bound to the protected brick-production environment and the only one that runs no brick code.
 on:
   workflow_call:
+    secrets:
+      MASS4_BRICKS_CI_SIGNING_KEY:
+        description: Signing key stored in the calling repository's brick-production environment
+        required: false
+      MASS4_BRICKS_STORE_TOKEN:
+        description: Publish token stored in the calling repository's brick-production environment
+        required: false
     inputs:
       brick-path:
         description: Brick folder in the calling repository
