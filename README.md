@@ -68,10 +68,10 @@ jobs:
   readiness:
     uses: MASS4ORG/action-brick-release/.github/workflows/readiness.yml@v1
     secrets:
-      MASS4_BRICKS_STORE_TOKEN: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+      MASS4_BRICKS_READ_TOKEN: ${{ secrets.MASS4_BRICKS_READ_TOKEN }}
 ```
 
-It checks the manifest's id and version against the CLI this workflow pins, reads only the publish token and the `MASS4_BRICKS_CI_PUBLIC_KEY` variable, and never requests the signing key. Its job selects the `environment` input, `brick-production` by default; a scheduled run comes from the default branch, so that environment's tag restriction and required reviewer apply to it. Take `brick-path`, `twin` and `store-url` as in a release.
+It checks the manifest's id and version against the CLI this workflow pins and never requests the signing key. Its job runs in the `brick-readiness` environment (the `environment` input), which holds `MASS4_BRICKS_READ_TOKEN`, a `registry.read` token for the brick's namespace, and the `MASS4_BRICKS_CI_PUBLIC_KEY` variable. It refuses `brick-production`: a scheduled run comes from the default branch, and no publish token belongs in an environment a branch can reach. A read token covers every readiness check; the publish scope itself is proven by the tag run's publish job, which repeats the checks with the publish token before signing. Take `brick-path`, `twin` and `store-url` as in a release.
 
 ### Re-running a tag
 

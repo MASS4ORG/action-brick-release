@@ -10,15 +10,15 @@ name: Brick publish readiness
 #     readiness:
 #       uses: MASS4ORG/action-brick-release/.github/workflows/readiness.yml@v1
 #       secrets:
-#         MASS4_BRICKS_STORE_TOKEN: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+#         MASS4_BRICKS_READ_TOKEN: ${{ secrets.MASS4_BRICKS_READ_TOKEN }}
 #
-# Runs the checks the release's publish job runs before signing, read-only, with the publish token and the public key
+# Runs the checks the release's publish job runs before signing, read-only, with a registry.read token and the public key
 # only. No brick code runs and the signing key is never requested.
 on:
   workflow_call:
     secrets:
-      MASS4_BRICKS_STORE_TOKEN:
-        description: Publish token stored in the calling repository's environment
+      MASS4_BRICKS_READ_TOKEN:
+        description: registry.read token for the brick's namespace, stored in the readiness environment
         required: true
     inputs:
       brick-path:
@@ -34,15 +34,32 @@ on:
         type: string
         default: https://bricks.mass4.org
       environment:
-        description: Environment holding MASS4_BRICKS_STORE_TOKEN and the MASS4_BRICKS_CI_PUBLIC_KEY variable
+        description: Environment holding MASS4_BRICKS_READ_TOKEN and the MASS4_BRICKS_CI_PUBLIC_KEY variable; never brick-production
         type: string
-        default: brick-production
+        default: brick-readiness
 
 permissions:
   contents: read
 
 jobs:
+  # brick-production holds the publish token and signing key and admits only release tags; a scheduled run comes from
+  # the default branch. Refused before any job enters an environment.
+  environment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Refuse the release environment
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          if [[ "$ENVIRONMENT" == brick-production ]]; then
+            echo "::error::Readiness must not run in brick-production. Use a separate environment holding a registry.read token."
+            exit 1
+          fi
+
   readiness:
+    needs: environment
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: ${{ inputs.environment }}
@@ -74,4 +91,4 @@ jobs:
           image: ${{ steps.variants.outputs.image }}
           store-url: ${{ inputs.store-url }}
           public-key: ${{ vars.MASS4_BRICKS_CI_PUBLIC_KEY }}
-          store-token: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+          store-token: ${{ secrets.MASS4_BRICKS_READ_TOKEN }}
