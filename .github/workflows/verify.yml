@@ -91,7 +91,7 @@ jobs:
           # The same image release.yml pins, so verification packs what a release would.
           image: >-
             ${{ inputs.turian-version != '' && format('ghcr.io/mass4org/turian-cli:{0}', inputs.turian-version)
-            || 'ghcr.io/mass4org/turian-cli:3.3.0@sha256:88dd379139cf1718368ff478ae6f5ed37c0333d26ddb2b2ce2bcabda4ae8406d' }}
+            || 'ghcr.io/mass4org/turian-cli:3.4.0@sha256:c8ea27808fd2f1d12012e9d78c22d3a11e020216f9a605e8fb93f53bbdef367f' }}
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

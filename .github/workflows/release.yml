@@ -70,7 +70,7 @@ jobs:
           REQUESTED: ${{ inputs.turian-version }}
           # The CLI every brick releases with unless it asks for another version. Moved by a minor release of this
           # workflow; verify.yml pins the same image.
-          PINNED_IMAGE: ghcr.io/mass4org/turian-cli:3.3.0@sha256:88dd379139cf1718368ff478ae6f5ed37c0333d26ddb2b2ce2bcabda4ae8406d
+          PINNED_IMAGE: ghcr.io/mass4org/turian-cli:3.4.0@sha256:c8ea27808fd2f1d12012e9d78c22d3a11e020216f9a605e8fb93f53bbdef367f
         run: |
           if [[ -z "$REQUESTED" ]]; then
             reference="$PINNED_IMAGE"
@@ -87,7 +87,7 @@ jobs:
           docker pull -q "$image" > /dev/null
           version=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$image")
           if ! docker run --rm --entrypoint sh "$image" -c 'command -v brick-release' > /dev/null; then
-            echo "::error::turian-cli $version has no brick-release; release with 3.3.0 or later."
+            echo "::error::turian-cli $version has no brick-release; release with 3.4.0 or later."
             exit 1
           fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
