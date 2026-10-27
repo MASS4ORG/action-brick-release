@@ -9,23 +9,17 @@ permissions:
   contents: read
 
 jobs:
-  pins:
+  check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      # release.yml, verify.yml and readiness.yml must pin the same CLI, so a brick verifies and checks readiness with
-      # what it releases with.
-      - name: One pinned CLI
-        shell: bash
-        run: |
-          pins=$(grep -ohE 'ghcr\.io/mass4org/turian-cli:[0-9.]+@sha256:[0-9a-f]{64}' .github/workflows/release.yml .github/workflows/verify.yml .github/workflows/readiness.yml | sort -u)
-          echo "$pins"
-          [[ $(wc -l <<< "$pins") == 1 && -n "$pins" ]] || { echo "::error::release.yml, verify.yml and readiness.yml pin different CLIs."; exit 1; }
-
-      - name: Lint the workflows
-        uses: docker://rhysd/actionlint:1.7.12
-        with:
-          args: -color .github/workflows/release.yml .github/workflows/verify.yml .github/workflows/readiness.yml
+      - name: Check action pins and CLI defaults
+        run: python3 scripts/check.py
+      - name: Run regression tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Lint workflow files and shell scripts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/lint.sh

@@ -1,102 +1,116 @@
-# Turian brick release workflows
+# Brick workflows
 
-Reusable workflows that release a [Turian](https://github.com/MASS4ORG/Turian) brick to the MASS4 asset store from a tag, and verify it on every push. They wire [action-brick-build](https://github.com/MASS4ORG/action-brick-build) and [action-brick-publish](https://github.com/MASS4ORG/action-brick-publish) so that brick code never runs where the publishing secrets are.
+Verify a brick on pushes and pull requests with no setup:
 
-## Release
+```yaml
+name: Verify brick
+on: {push: {branches: [main]}, pull_request: {}}
+permissions: {contents: read}
+jobs:
+  verify:
+    uses: MASS4ORG/action-brick-release/.github/workflows/verify.yml@v1
+```
 
-`.github/workflows/brick-release.yml` in the brick repository:
+## Which setup do I need?
+
+| You want | Setup |
+|---|---|
+| Verify on push/PR only | None: zero secrets, zero environments |
+| Publish to the MASS4 store | `brick-production` environment restricted to `v*` tags, two secrets, and store-side key registration |
+| Publish to your own registry | `action-brick-build` only, no secrets; upload its archives through your registry's own pipeline |
+
+## Release to the MASS4 store
+
+Create `.github/workflows/brick-release.yml`:
 
 ```yaml
 name: Release brick
-
 on:
   push:
     tags: ["v*"]
-
 permissions:
   contents: read
-
 jobs:
   release:
     uses: MASS4ORG/action-brick-release/.github/workflows/release.yml@v1
     secrets:
       MASS4_BRICKS_CI_SIGNING_KEY: ${{ secrets.MASS4_BRICKS_CI_SIGNING_KEY }}
       MASS4_BRICKS_STORE_TOKEN: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
-    with:
-      source-tests: Brick~/Tests/My.Brick.Tests/My.Brick.Tests.csproj
 ```
 
-| Job            | Secrets | Does                                                                                                  |
-|----------------|---------|-------------------------------------------------------------------------------------------------------|
-| `image`        | none    | Resolves the pinned turian-cli version to its digest                                                  |
-| `source-tests` | none    | Builds and runs the brick's tests against the Turian release of that CLI                              |
-| `qualify`      | none    | Builds, consumer-tests and qualifies the archives, binding their bytes to the tag and commit          |
-| `publish`      | yes     | In the `brick-production` environment: checks the bytes, signs and uploads; runs no brick code        |
+The signing key must already be registered with the store for your package namespace. The store token must grant `registry.publish` for that namespace. Use an unencrypted OpenSSH Ed25519 private key dedicated to CI; the action derives its public key at run time. No GitHub variable is needed.
 
-The caller explicitly forwards the two secret names shown above. Their values stay in the calling repository's environment and are available to the `publish` job after its environment rules pass; the public key stays an environment variable. Keep `secrets: inherit` out of the caller. The workflow declares these names as optional for compatibility; signing and uploading require nonempty values.
+Create the environment and its two secrets from your terminal, replacing `OWNER/BRICK` and the private-key file path:
 
-The repository's `brick-production` environment holds `MASS4_BRICKS_CI_SIGNING_KEY` and `MASS4_BRICKS_STORE_TOKEN` as secrets and `MASS4_BRICKS_CI_PUBLIC_KEY` as a variable. Restrict it to `v*` tags, with a required reviewer and no administrator bypass.
+```bash
+repo=OWNER/BRICK
+gh api --method PUT "repos/$repo/environments/brick-production" --input - <<'JSON'
+{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
+JSON
+gh api --method POST "repos/$repo/environments/brick-production/deployment-branch-policies" -f name='v*' -f type=tag
+gh secret set MASS4_BRICKS_CI_SIGNING_KEY --repo "$repo" --env brick-production < path/to/ci-private-key
+gh secret set MASS4_BRICKS_STORE_TOKEN --repo "$repo" --env brick-production
+```
 
-Before the first tag, a Store administrator must authorize the CI public key in **both** registry signature trust and namespace publisher authority. Import it additively through `Registry:TrustedPublicKeys`/`--initialize` and verify its fingerprint in `/v1/keys`; separately register it under `org.mass4` at `/account/namespaces`. Neither step performs the other. Apply the same two checks to the Tier 1 key for emergency manual releases, with its private half remaining on the owner's workstation. Preserve existing registry keys unless a separate rotation/revocation is approved. Clients also need independent signing-key trust.
+Keep the environment free of required reviewers. Pushing a release tag is the release decision; the workflow requires no approval clicks afterward. Store-side package approval, where applicable, is separate from GitHub execution.
 
-| Input            | Default                    | Description                                                                   |
-|------------------|----------------------------|-------------------------------------------------------------------------------|
-| `brick-path`     | `.`                        | Brick folder in the repository                                                |
-| `precast`        | `true`                     | Compile assemblies before packing                                             |
-| `twin`           | `true`                     | Release the baked twin beside the brick, a variant of its id and version      |
-| `turian-version` |                            | Exact turian-cli version, e.g. `3.3.1`; empty for the one this workflow pins  |
-| `source-tests`   |                            | Test project under the brick                                                  |
-| `test-command`   |                            | Further tests on the runner; `BRICK_ARCHIVE` is the exact archive             |
-| `store-url`      | `https://bricks.mass4.org` | Asset store to upload to                                                      |
+Push a tag shaped `v<semver>` to release. Its version is injected into the packed manifest. A different `package.json` version produces a warning and does not block the release; that field remains useful during development. A normal branch push never publishes a release.
 
-### Publish readiness
+## What runs
 
-The `publish` job runs [publish readiness](https://github.com/MASS4ORG/action-brick-publish#publish-readiness) before it signs: image pin, registry signature trust, namespace publisher authority, token namespace, the store's provenance read and curator advisories, each failure naming its layer. Run the same checks before tagging, on a schedule and by hand, with `.github/workflows/brick-readiness.yml`:
+The release planner reads package identity and store provenance without executing brick code. For a first publication it selects the highest stable semver CLI image tag; an exact `turian-version` overrides that choice. It never uses Docker's `latest` tag.
+
+When the store already has the release, including an unapproved or partially published release, its recorded CLI digest takes precedence. Source tests, packing, consumer qualification and publishing use that same selected image/version. The selection is recorded in the job summary and `build.json` beside the archives. Existing receipts without usable build provenance fail explicitly instead of guessing another build image.
+
+Build and test jobs have no publishing credentials. The isolated planner reads the namespace token, and the isolated publish job derives the key identity, runs authenticated readiness, signs and uploads the qualified bytes. Publish rechecks the store record immediately before upload. CLI version tags remain immutable.
+
+Verification uses the same highest-stable-semver resolver and defaults source tests to that CLI's release sources. `turian-ref` is an optional development override for verify only.
+
+## Inputs
+
+| Input | Default | Purpose |
+|---|---|---|
+| `brick-path` | `.` | Brick folder in the caller repository |
+| `precast` | `true` | Compile runtime assemblies before packing |
+| `twin` | `true` | Build and release the baked variant alongside the source |
+| `turian-version` | Empty | Resolve highest stable semver at tag time; an exact version overrides first-publication selection |
+| `source-tests` | Empty | Test-project path under the brick |
+| `source-test-dependency` | `{}` | Optional companion checkout JSON: `repository`, immutable `ref`, and `path` under `Bricks/` |
+| `turian-ref` | Empty | Verify-only source override; otherwise use the selected CLI release |
+| `test-command` | Empty | Release-only additional archive tests; `BRICK_ARCHIVE` names the source archive |
+| `store-url` | `https://bricks.mass4.org` | Release destination and provenance source |
+
+Declare `source-tests` in both callers when tests exist. A Bepu caller also supplies its companion source checkout:
 
 ```yaml
-name: Brick readiness
-
-on:
-  schedule:
-    - cron: "17 6 * * *"
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-jobs:
-  readiness:
-    uses: MASS4ORG/action-brick-release/.github/workflows/readiness.yml@v1
-    secrets:
-      MASS4_BRICKS_READ_TOKEN: ${{ secrets.MASS4_BRICKS_READ_TOKEN }}
-```
-
-It checks the manifest's id and version against the CLI this workflow pins and never requests the signing key. Its job runs in the `brick-readiness` environment (the `environment` input), which holds `MASS4_BRICKS_READ_TOKEN`, a `registry.read` token for the brick's namespace, and the `MASS4_BRICKS_CI_PUBLIC_KEY` variable. It refuses `brick-production`: a scheduled run comes from the default branch, and no publish token belongs in an environment a branch can reach. A read token covers every readiness check; the publish scope itself is proven by the tag run's publish job, which repeats the checks with the publish token before signing. Take `brick-path`, `twin` and `store-url` as in a release.
-
-### Re-running a tag
-
-A release never resolves a moving tag: it uses the version this workflow pins, or an exact one the caller names, and turian-cli version tags are never pushed twice. So a re-run resolves the same digest, packs the same bytes, and the store accepts the identical upload again.
-
-The store is the record of each release's provenance: the signed release JSON carries the image digest and Turian version as its unsigned `build`, and the store keeps the first `build` and source commit it received. Before uploading, the publish job reads that record back: it refuses different bytes, a re-run built by another image than the recorded one, and any build a curator advisory rejects. Identical bytes with other metadata are accepted, keep the first record and show up as warnings.
-
-## Verify
-
-`.github/workflows/brick.yml` in the brick repository:
-
-```yaml
-jobs:
-  brick:
-    uses: MASS4ORG/action-brick-release/.github/workflows/verify.yml@v1
     with:
-      source-tests: Brick~/Tests/My.Brick.Tests/My.Brick.Tests.csproj
+      source-tests: Brick~/Tests/Turian.Physics.Bepu.Tests/Turian.Physics.Bepu.Tests.csproj
+      source-test-dependency: >-
+        {"repository":"MASS4ORG/org.mass4.turian.physics","ref":"v1.0.0","path":"org.mass4.turian.physics"}
 ```
 
-It packs with the same pinned CLI as a release and runs the source tests against Turian's `main` (`turian-ref`). It takes the same `brick-path`, `precast`, `twin`, `turian-version` and `source-tests` inputs.
+Companion checkouts supply producer projects for source tests. Consumer qualification resolves declared package dependencies from the store, so publish dependencies before their dependents.
+
+## Manual preflight
+
+Run `readiness.yml` manually in this repository with a package id and prospective version. It uses no secrets or environment. An optional public-key input enables registry-trust and namespace-publisher checks; omitted identity checks are reported as skipped. Token and private provenance checks are also skipped and explicitly deferred to tag-time preflight. A successful manual run means the public checks passed, not that authenticated publication is fully ready.
+
+## Troubleshooting
+
+| Failure layer | Fix |
+|---|---|
+| Image selection | Confirm an exact stable CLI image exists, or remove the override to resolve the highest stable semver |
+| Package/tag | Push a `v<semver>` tag; manifest-version drift is only a warning |
+| Signing identity | Supply an unencrypted OpenSSH Ed25519 CI key |
+| Registry trust | Ask the registry operator to authorize the derived public key in signature trust |
+| Namespace publisher | Register that public key as a publisher for the package namespace |
+| Token/account: 401 | Replace an expired, revoked or wrong-store access token |
+| Token/account: 403 or wrong namespace | Grant the token `registry.publish` for the package namespace |
+| Provenance | Reuse the recorded build; investigate missing provenance or conflicting source/twin receipts |
+| Changed archive bytes | Restore the original source/dependency inputs for a retry, or release a new package version |
+| Advisories | Follow the linked advisory and resolve its stated restriction |
+| HTTP 429/5xx or transport | Retry when the registry/store is healthy; check the configured store URL |
 
 ## Versions
 
-`@v1` moves with every compatible release. A new pinned turian-cli is a minor release; only a breaking input change makes a `v2`.
-
-## License
-
-[MIT](LICENSE.md)
+`@v1` follows compatible implementation updates. Breaking input changes use a new major version. Turian releases do not require a new workflow release; CLI selection is independent of workflow versioning.

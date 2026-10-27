@@ -39,9 +39,13 @@ on:
         type: boolean
         default: true
       turian-version:
-        description: Exact turian-cli version to release with, e.g. 3.3.1; empty for the one this workflow pins
+        description: Exact stable CLI version override; empty resolves the highest stable semver image tag
         type: string
         default: ""
+      source-test-dependency:
+        description: 'Optional source-test companion checkout as JSON with repository, ref and path (under Bricks)'
+        type: string
+        default: '{}'
       source-tests:
         description: Test project under the brick, built against the Turian release of the CLI; empty when the brick has none
         type: string
@@ -67,41 +71,27 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: brick-production
     outputs:
       image: ${{ steps.image.outputs.image }}
       version: ${{ steps.image.outputs.version }}
     steps:
-      # A release never resolves a moving tag. Version tags of turian-cli are never pushed twice, so the same version
-      # always resolves to the same digest and a re-run tag packs the same bytes the store already holds.
-      - name: Resolve the CLI image
+      # Read only package identity here. No brick code runs with the namespace token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: Bricks/brick
+          persist-credentials: false
+      - name: Select the release build image
         id: image
-        shell: bash
-        env:
-          REQUESTED: ${{ inputs.turian-version }}
-          # The CLI every brick releases with unless it asks for another version. Moved by a minor release of this
-          # workflow; verify.yml pins the same image.
-          PINNED_IMAGE: ghcr.io/mass4org/turian-cli:3.4.0@sha256:c8ea27808fd2f1d12012e9d78c22d3a11e020216f9a605e8fb93f53bbdef367f
-        run: |
-          if [[ -z "$REQUESTED" ]]; then
-            reference="$PINNED_IMAGE"
-          elif [[ "$REQUESTED" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            reference="ghcr.io/mass4org/turian-cli:$REQUESTED"
-          else
-            echo "::error::turian-version must be an exact version such as 3.3.1, not \"$REQUESTED\"."
-            exit 1
-          fi
-          docker pull -q "$reference" > /dev/null
-          image=$(docker image inspect --format '{{ range .RepoDigests }}{{ println . }}{{ end }}' "$reference" \
-            | grep -m1 '^ghcr\.io/mass4org/turian-cli@sha256:')
-          # Later jobs pull it by digest, so make sure the registry serves it.
-          docker pull -q "$image" > /dev/null
-          version=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$image")
-          if ! docker run --rm --entrypoint sh "$image" -c 'command -v brick-release' > /dev/null; then
-            echo "::error::turian-cli $version has no brick-release; release with 3.4.0 or later."
-            exit 1
-          fi
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+        uses: MASS4ORG/action-brick-release/resolve@v1
+        with:
+          turian-version: ${{ inputs.turian-version }}
+          release-tag: ${{ github.ref_name }}
+          brick-path: Bricks/brick/${{ inputs.brick-path }}
+          store-url: ${{ inputs.store-url }}
+          store-token: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+          twin: ${{ inputs.twin }}
 
   # The brick's own tests need Turian's sources: those of the release the CLI was built from. No secrets here.
   source-tests:
@@ -110,20 +100,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           path: Bricks/brick
           persist-credentials: false
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: MASS4ORG/Turian
           ref: v${{ needs.image.outputs.version }}
           path: Turian
           persist-credentials: false
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+      - name: Check out the source-test dependency
+        if: inputs.source-test-dependency != '{}'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ fromJSON(inputs.source-test-dependency).repository }}
+          ref: ${{ fromJSON(inputs.source-test-dependency).ref }}
+          path: Bricks/${{ fromJSON(inputs.source-test-dependency).path }}
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: Turian/global.json
 
@@ -147,7 +146,7 @@ jobs:
     env:
       TURIAN_CLI_IMAGE: ${{ needs.image.outputs.image }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -160,6 +159,7 @@ jobs:
           precast: ${{ inputs.precast }}
           twin: ${{ inputs.twin }}
           image: ${{ needs.image.outputs.image }}
+          release-tag: ${{ github.ref_name }}
 
       - name: Bind qualification to archive bytes
         id: identity
@@ -211,7 +211,7 @@ jobs:
             validate "$TWIN_ARCHIVE" twin-qualification.json
           fi
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: qualified-brick
           path: |
@@ -230,7 +230,7 @@ jobs:
     environment: brick-production
     steps:
       # Only the pinned image runs here; no brick code or consumer tests execute with secrets.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: qualified-brick
           path: qualified
@@ -254,5 +254,4 @@ jobs:
           image: ${{ needs.image.outputs.image }}
           store-url: ${{ inputs.store-url }}
           signing-key: ${{ secrets.MASS4_BRICKS_CI_SIGNING_KEY }}
-          public-key: ${{ vars.MASS4_BRICKS_CI_PUBLIC_KEY }}
           store-token: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}

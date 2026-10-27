@@ -12,7 +12,7 @@ name: Brick verify
 #       with:
 #         source-tests: Brick~/Tests/My.Brick.Tests/My.Brick.Tests.csproj
 #
-# Builds what a release would, with the same pinned CLI, and runs the brick's own tests against Turian's main branch.
+# Builds and tests with the same stable CLI selection used for a first release.
 # Needs no secrets and publishes nothing.
 on:
   workflow_call:
@@ -30,41 +30,68 @@ on:
         type: boolean
         default: true
       turian-version:
-        description: turian-cli version to pack with; empty for the one release.yml pins
+        description: Exact stable CLI version override; empty resolves the highest stable semver image tag
         type: string
         default: ""
+      source-test-dependency:
+        description: 'Optional source-test companion checkout as JSON with repository, ref and path (under Bricks)'
+        type: string
+        default: '{}'
       source-tests:
         description: Test project under the brick; empty when the brick has none
         type: string
         default: ""
       turian-ref:
-        description: Turian branch or tag the source tests build against
+        description: Optional development source override; empty uses the selected CLI release sources
         type: string
-        default: main
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      version: ${{ steps.image.outputs.version }}
+    steps:
+      - name: Select the verification image
+        id: image
+        uses: MASS4ORG/action-brick-release/resolve@v1
+        with:
+          turian-version: ${{ inputs.turian-version }}
+
   # The brick's own tests, built against Turian's sources checked out beside it as on a workstation.
   source-tests:
+    needs: image
     if: inputs.source-tests != ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: Bricks/brick
           persist-credentials: false
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: MASS4ORG/Turian
-          ref: ${{ inputs.turian-ref }}
+          ref: ${{ inputs.turian-ref != '' && inputs.turian-ref || format('v{0}', needs.image.outputs.version) }}
           path: Turian
           persist-credentials: false
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+      - name: Check out the source-test dependency
+        if: inputs.source-test-dependency != '{}'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ fromJSON(inputs.source-test-dependency).repository }}
+          ref: ${{ fromJSON(inputs.source-test-dependency).ref }}
+          path: Bricks/${{ fromJSON(inputs.source-test-dependency).path }}
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: Turian/global.json
 
@@ -74,10 +101,11 @@ jobs:
         run: dotnet test --project "../Bricks/brick/${{ inputs.brick-path }}/${{ inputs.source-tests }}" -p:SkipShaders=true
 
   brick:
+    needs: image
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -88,12 +116,9 @@ jobs:
           brick-path: ${{ inputs.brick-path }}
           precast: ${{ inputs.precast }}
           twin: ${{ inputs.twin }}
-          # The same image release.yml pins, so verification packs what a release would.
-          image: >-
-            ${{ inputs.turian-version != '' && format('ghcr.io/mass4org/turian-cli:{0}', inputs.turian-version)
-            || 'ghcr.io/mass4org/turian-cli:3.4.0@sha256:c8ea27808fd2f1d12012e9d78c22d3a11e020216f9a605e8fb93f53bbdef367f' }}
+          image: ${{ needs.image.outputs.image }}
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: brick
           path: |

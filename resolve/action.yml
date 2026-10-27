@@ -1,0 +1,45 @@
+name: Select the Turian CLI image
+description: Resolve the highest stable CLI image or reuse a release's recorded build digest
+inputs:
+  turian-version:
+    description: Exact stable CLI version override; empty selects the highest stable semver image tag
+    default: ''
+  release-tag:
+    description: Release tag; empty for verification without a provenance lookup
+    default: ''
+  brick-path:
+    description: Brick directory used only to read its package identity
+    default: .
+  store-url:
+    description: Registry holding release provenance
+    default: https://bricks.mass4.org
+  store-token:
+    description: Namespace token for reading pending release provenance; empty during verification
+    default: ''
+  twin:
+    description: Check any existing twin receipt uses the same build
+    default: 'true'
+outputs:
+  image:
+    description: Selected CLI image pinned by digest
+    value: ${{ steps.select.outputs.image }}
+  version:
+    description: Exact selected CLI version
+    value: ${{ steps.select.outputs.version }}
+  selection:
+    description: Whether selection used a store receipt, explicit override or highest stable semver
+    value: ${{ steps.select.outputs.selection }}
+runs:
+  using: composite
+  steps:
+    - name: Select the CLI image
+      id: select
+      shell: bash
+      env:
+        REQUESTED_VERSION: ${{ inputs.turian-version }}
+        RELEASE_TAG: ${{ inputs.release-tag }}
+        BRICK_PATH: ${{ inputs.brick-path }}
+        STORE_URL: ${{ inputs.store-url }}
+        STORE_TOKEN: ${{ inputs.store-token }}
+        TWIN: ${{ inputs.twin }}
+      run: python3 "$GITHUB_ACTION_PATH/../scripts/resolve_image.py"
