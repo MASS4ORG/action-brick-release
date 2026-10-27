@@ -75,6 +75,7 @@ jobs:
     outputs:
       image: ${{ steps.image.outputs.image }}
       version: ${{ steps.image.outputs.version }}
+      has-records: ${{ steps.image.outputs.has-records }}
     steps:
       # Read only package identity here. No brick code runs with the namespace token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,6 +93,14 @@ jobs:
           store-url: ${{ inputs.store-url }}
           store-token: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
           twin: ${{ inputs.twin }}
+          replay-directory: ${{ runner.temp }}/recorded-bricks
+      - name: Retain verified recorded archives
+        if: steps.image.outputs.has-records == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: recorded-bricks
+          path: ${{ runner.temp }}/recorded-bricks/*
+          if-no-files-found: error
 
   # The brick's own tests need Turian's sources: those of the release the CLI was built from. No secrets here.
   source-tests:
@@ -151,6 +160,13 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Restore recorded archives
+        if: needs.image.outputs.has-records == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: recorded-bricks
+          path: ${{ runner.temp }}/recorded-bricks
+
       - name: Build and test as a consumer
         id: build
         uses: MASS4ORG/action-brick-build@v1
@@ -160,6 +176,7 @@ jobs:
           twin: ${{ inputs.twin }}
           image: ${{ needs.image.outputs.image }}
           release-tag: ${{ github.ref_name }}
+          replay-directory: ${{ needs.image.outputs.has-records == 'true' && format('{0}/recorded-bricks', runner.temp) || '' }}
 
       - name: Bind qualification to archive bytes
         id: identity

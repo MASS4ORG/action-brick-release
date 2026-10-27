@@ -19,6 +19,9 @@ inputs:
   twin:
     description: Check any existing twin receipt uses the same build
     default: 'true'
+  replay-directory:
+    description: Optional directory for hash-verified recorded archives and receipts
+    default: ''
 outputs:
   image:
     description: Selected CLI image pinned by digest
@@ -29,6 +32,9 @@ outputs:
   selection:
     description: Whether selection used a store receipt, explicit override or highest stable semver
     value: ${{ steps.select.outputs.selection }}
+  has-records:
+    description: Whether this release has existing archive receipts
+    value: ${{ steps.select.outputs.has-records }}
 runs:
   using: composite
   steps:
@@ -42,4 +48,5 @@ runs:
         STORE_URL: ${{ inputs.store-url }}
         STORE_TOKEN: ${{ inputs.store-token }}
         TWIN: ${{ inputs.twin }}
+        REPLAY_DIRECTORY: ${{ inputs.replay-directory }}
       run: python3 "$GITHUB_ACTION_PATH/../scripts/resolve_image.py"

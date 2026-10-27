@@ -62,6 +62,8 @@ The release planner reads package identity and store provenance without executin
 
 When the store already has the release, including an unapproved or partially published release, its recorded CLI digest takes precedence. Source tests, packing, consumer qualification and publishing use that same selected image/version. The selection is recorded in the job summary and `build.json` beside the archives. Existing receipts without usable build provenance fail explicitly instead of guessing another build image.
 
+When an existing archive is readable, the planner verifies its recorded SHA256 and replays those exact bytes through qualification and consumer tests. Missing variants are built normally. Pending archives may be hidden by the store: those variants rebuild with the recorded CLI and must match the receipt's archive hash. A nondeterministic older CLI can still fail that hash check; the workflow never overwrites the immutable stored archive.
+
 Build and test jobs have no publishing credentials. The isolated planner reads the namespace token, and the isolated publish job derives the key identity, runs authenticated readiness, signs and uploads the qualified bytes. Publish rechecks the store record immediately before upload. CLI version tags remain immutable.
 
 Verification uses the same highest-stable-semver resolver and defaults source tests to that CLI's release sources. `turian-ref` is an optional development override for verify only.

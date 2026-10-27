@@ -1,8 +1,10 @@
 """Regression tests for shared CLI selection, including partial-ingest retries."""
 
 import importlib.util
+import io
 import json
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -27,6 +29,25 @@ class RegistryFixture:
 
 
 class SelectionTests(unittest.TestCase):
+    def test_recorded_archive_download_requires_the_recorded_hash(self):
+        payload = b'exact stored archive'
+        import base64
+        import hashlib
+        record = {'id': '2dda8cc6-1276-402f-a30c-9d63550e348d', 'packageId': PACKAGE, 'version': '1.0.2',
+                  'variant': 'source', 'integrity': 'sha256-' + base64.b64encode(hashlib.sha256(payload).digest()).decode()}
+        for data, succeeds in [(payload, True), (b'corrupted', False)]:
+            with self.subTest(succeeds=succeeds), tempfile.TemporaryDirectory() as directory:
+                opener = type('Fixture', (), {'open': lambda self, *args, **kwargs: io.BytesIO(data)})()
+                with patch.object(module.urllib.request, 'build_opener', return_value=opener):
+                    if succeeds:
+                        result = module.download_recorded('https://store.example', 'mass4_fixture', record, Path(directory))
+                        self.assertTrue(result['available'])
+                        self.assertEqual(payload, (Path(directory) / result['file']).read_bytes())
+                    else:
+                        with self.assertRaises(module.SelectionError):
+                            module.download_recorded('https://store.example', 'mass4_fixture', record, Path(directory))
+                        self.assertEqual([], list(Path(directory).iterdir()))
+
     def test_first_release_and_verify_use_same_stable_selection(self):
         registry = RegistryFixture()
         with patch.object(module, 'get_json', return_value=(module.NOT_FOUND, {})):

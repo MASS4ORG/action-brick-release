@@ -2,13 +2,16 @@
 """Select one published CLI image for every job in a brick workflow run."""
 
 import hashlib
+import base64
 import json
 import os
+from pathlib import Path
 import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 REPOSITORY = 'ghcr.io/mass4org/turian-cli'
 STABLE = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z')
@@ -81,7 +84,36 @@ def receipt(store, token, package, version, variant):
     build = value.get('build')
     if not isinstance(build, dict) or not PINNED.fullmatch(build.get('image', '')) or not STABLE.fullmatch(build.get('turianVersion', '')):
         raise SelectionError('Provenance: existing release has no usable recorded CLI digest/version; refusing to guess a replacement.')
-    return build
+    return {**build, '_receipt': value}
+
+
+def download_recorded(store, token, recorded, directory):
+    """Retain exact immutable bytes when the store permits archive access."""
+    identity = str(uuid.UUID(recorded['id']))
+    filename = f'{recorded["packageId"]}-{recorded["version"]}--{recorded["variant"]}.brick'
+    destination = directory / filename
+    request = urllib.request.Request(f'{store.rstrip("/")}/api/v1/releases/{identity}/archive',
+        headers={'Authorization': 'Bearer ' + token, 'User-Agent': 'MASS4-brick-workflows'})
+    digest = hashlib.sha256()
+    try:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=60) as response, destination.open('wb') as output:
+            while block := response.read(1024 * 1024):
+                output.write(block)
+                digest.update(block)
+    except urllib.error.HTTPError as error:
+        destination.unlink(missing_ok=True)
+        if error.code == 404:
+            print('::warning::Recorded archive is not downloadable; rebuild must match its recorded hash.')
+            return {**recorded, 'file': filename, 'available': False}
+        raise SelectionError(f'Provenance archive read returned HTTP {error.code}.') from None
+    except (urllib.error.URLError, TimeoutError):
+        destination.unlink(missing_ok=True)
+        raise SelectionError('Provenance archive download failed before completion.') from None
+    integrity = 'sha256-' + base64.b64encode(digest.digest()).decode()
+    if integrity != recorded.get('integrity'):
+        destination.unlink(missing_ok=True)
+        raise SelectionError('Provenance archive bytes do not match the recorded integrity.')
+    return {**recorded, 'file': filename, 'available': True}
 
 
 class Registry:
@@ -143,10 +175,12 @@ class Registry:
         return REPOSITORY + '@' + canonical
 
 
-def select(requested='', package='', version='', token='', store='https://bricks.mass4.org', twin=True, registry=None):
+def select(requested='', package='', version='', token='', store='https://bricks.mass4.org', twin=True, registry=None,
+           replay_directory=None):
     if requested and not STABLE.fullmatch(requested):
         raise SelectionError('turian-version must be an exact stable semver, such as major.minor.patch.')
     recorded = None
+    records = []
     if token:
         if not ID.fullmatch(package) or not SEMVER.fullmatch(version):
             raise SelectionError('Provenance: invalid package id or tag version.')
@@ -155,6 +189,8 @@ def select(requested='', package='', version='', token='', store='https://bricks
             raise SelectionError('Provenance: invalid store URL.')
         token = store_token(token)
         recorded = receipt(store, token, package, version, 'source')
+        if recorded:
+            records.append(recorded['_receipt'])
     registry = registry or Registry()
     if recorded:
         selected = recorded['turianVersion']
@@ -174,7 +210,13 @@ def select(requested='', package='', version='', token='', store='https://bricks
         baked = receipt(store, token, package, version, variant)
         if baked and (baked['image'] != image or baked['turianVersion'] != selected):
             raise SelectionError('Provenance: source and twin record different build images; a single build cannot reproduce both.')
-    return {'image': image, 'version': selected, 'selection': reason}
+        if baked:
+            records.append(baked['_receipt'])
+    if replay_directory is not None and records:
+        replay_directory.mkdir(parents=True, exist_ok=True)
+        archives = [download_recorded(store, token, record, replay_directory) for record in records]
+        (replay_directory / 'recorded.json').write_text(json.dumps(archives, indent=2))
+    return {'image': image, 'version': selected, 'selection': reason, 'has-records': str(bool(records)).lower()}
 
 
 def main():
@@ -192,7 +234,8 @@ def main():
             raise SelectionError('Provenance: release planning requires the namespace store token before building.')
     result = select(os.environ.get('REQUESTED_VERSION', ''), package, version,
                     os.environ.get('STORE_TOKEN', ''), os.environ.get('STORE_URL', 'https://bricks.mass4.org'),
-                    os.environ.get('TWIN', 'true') == 'true')
+                    os.environ.get('TWIN', 'true') == 'true',
+                    replay_directory=Path(os.environ['REPLAY_DIRECTORY']) if os.environ.get('REPLAY_DIRECTORY') else None)
     if output := os.environ.get('GITHUB_OUTPUT'):
         with open(output, 'a') as stream:
             for key, value in result.items():
