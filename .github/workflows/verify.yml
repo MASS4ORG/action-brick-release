@@ -8,7 +8,7 @@ name: Brick verify
 #     pull_request:
 #   jobs:
 #     brick:
-#       uses: MASS4ORG/action-brick-release/.github/workflows/verify.yml@v1
+#       uses: MASS4ORG/brick-workflows/.github/workflows/verify.yml@v1
 #       with:
 #         source-tests: Brick~/Tests/My.Brick.Tests/My.Brick.Tests.csproj
 #
@@ -59,7 +59,7 @@ jobs:
     steps:
       - name: Select the verification image
         id: image
-        uses: MASS4ORG/action-brick-release/resolve@v1
+        uses: MASS4ORG/brick-workflows/resolve@v1
         with:
           turian-version: ${{ inputs.turian-version }}
 
@@ -111,7 +111,7 @@ jobs:
 
       - name: Build and test as a consumer
         id: build
-        uses: MASS4ORG/action-brick-build@v1
+        uses: MASS4ORG/brick-action-build@v1
         with:
           brick-path: ${{ inputs.brick-path }}
           precast: ${{ inputs.precast }}

@@ -15,6 +15,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Read the shared GitLab template
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: MASS4ORG/Turian
+          ref: main
+          path: .ci/Turian
+          sparse-checkout: ci/brick.gitlab-ci.yml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: Check action pins and CLI defaults
         run: python3 scripts/check.py
       - name: Run regression tests

@@ -8,7 +8,7 @@ on: {push: {branches: [main]}, pull_request: {}}
 permissions: {contents: read}
 jobs:
   verify:
-    uses: MASS4ORG/action-brick-release/.github/workflows/verify.yml@v1
+    uses: MASS4ORG/brick-workflows/.github/workflows/verify.yml@v1
 ```
 
 ## Which setup do I need?
@@ -17,7 +17,7 @@ jobs:
 |---|---|
 | Verify on push/PR only | None: zero secrets, zero environments |
 | Publish to the MASS4 store | `brick-production` environment restricted to `v*` tags, two secrets, and store-side key registration |
-| Publish to your own registry | `action-brick-build` only, no secrets; upload its archives through your registry's own pipeline |
+| Publish to your own registry | `brick-action-build` only, no secrets; upload its archives through your registry's own pipeline |
 
 ## Release to the MASS4 store
 
@@ -32,10 +32,10 @@ permissions:
   contents: read
 jobs:
   release:
-    uses: MASS4ORG/action-brick-release/.github/workflows/release.yml@v1
+    uses: MASS4ORG/brick-workflows/.github/workflows/release.yml@v1
     secrets:
-      MASS4_BRICKS_CI_SIGNING_KEY: ${{ secrets.MASS4_BRICKS_CI_SIGNING_KEY }}
-      MASS4_BRICKS_STORE_TOKEN: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+      BRICKS_SIGNING_KEY: ${{ secrets.BRICKS_SIGNING_KEY }}
+      BRICKS_STORE_ACCESS_TOKEN: ${{ secrets.BRICKS_STORE_ACCESS_TOKEN }}
 ```
 
 The signing key must already be registered with the store for your package namespace. The store token must grant `registry.publish` for that namespace. Use an unencrypted OpenSSH Ed25519 private key dedicated to CI; the action derives its public key at run time. No GitHub variable is needed.
@@ -48,8 +48,8 @@ gh api --method PUT "repos/$repo/environments/brick-production" --input - <<'JSO
 {"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
 JSON
 gh api --method POST "repos/$repo/environments/brick-production/deployment-branch-policies" -f name='v*' -f type=tag
-gh secret set MASS4_BRICKS_CI_SIGNING_KEY --repo "$repo" --env brick-production < path/to/ci-private-key
-gh secret set MASS4_BRICKS_STORE_TOKEN --repo "$repo" --env brick-production
+gh secret set BRICKS_SIGNING_KEY --repo "$repo" --env brick-production < path/to/ci-private-key
+gh secret set BRICKS_STORE_ACCESS_TOKEN --repo "$repo" --env brick-production
 ```
 
 Keep the environment free of required reviewers. Pushing a release tag is the release decision; the workflow requires no approval clicks afterward. Store-side package approval, where applicable, is separate from GitHub execution.

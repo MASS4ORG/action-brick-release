@@ -34,11 +34,11 @@ jobs:
     steps:
       - name: Select the preflight image
         id: image
-        uses: MASS4ORG/action-brick-release/resolve@v1
+        uses: MASS4ORG/brick-workflows/resolve@v1
         with:
           turian-version: ${{ inputs.turian-version }}
       - name: Check public readiness
-        uses: MASS4ORG/action-brick-publish/readiness@v1
+        uses: MASS4ORG/brick-action-publish/readiness@v1
         with:
           package-id: ${{ inputs.package-id }}
           version: ${{ inputs.version }}

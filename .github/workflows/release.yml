@@ -7,22 +7,22 @@ name: Brick release
 #       tags: ["v*"]
 #   jobs:
 #     release:
-#       uses: MASS4ORG/action-brick-release/.github/workflows/release.yml@v1
+#       uses: MASS4ORG/brick-workflows/.github/workflows/release.yml@v1
 #       secrets:
-#         MASS4_BRICKS_CI_SIGNING_KEY: ${{ secrets.MASS4_BRICKS_CI_SIGNING_KEY }}
-#         MASS4_BRICKS_STORE_TOKEN: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+#         BRICKS_SIGNING_KEY: ${{ secrets.BRICKS_SIGNING_KEY }}
+#         BRICKS_STORE_ACCESS_TOKEN: ${{ secrets.BRICKS_STORE_ACCESS_TOKEN }}
 #       with:
 #         twin: true
 #
-# Builds, tests and qualifies the brick with no secrets, then signs and uploads it in a job of its own, the only one
-# bound to the protected brick-production environment and the only one that runs no brick code.
+# Plans with the namespace token, builds/tests without publishing credentials, then signs and uploads in isolation.
+# The planner and publisher use brick-production; neither executes brick code.
 on:
   workflow_call:
     secrets:
-      MASS4_BRICKS_CI_SIGNING_KEY:
+      BRICKS_SIGNING_KEY:
         description: Signing key stored in the calling repository's brick-production environment
         required: false
-      MASS4_BRICKS_STORE_TOKEN:
+      BRICKS_STORE_ACCESS_TOKEN:
         description: Publish token stored in the calling repository's brick-production environment
         required: false
     inputs:
@@ -55,7 +55,7 @@ on:
         type: string
         default: ""
       store-url:
-        description: Asset store the release is uploaded to; MASS4_BRICKS_STORE_TOKEN must belong to it
+        description: Asset store the release is uploaded to; BRICKS_STORE_ACCESS_TOKEN must belong to it
         type: string
         default: https://bricks.mass4.org
 
@@ -85,13 +85,13 @@ jobs:
           persist-credentials: false
       - name: Select the release build image
         id: image
-        uses: MASS4ORG/action-brick-release/resolve@v1
+        uses: MASS4ORG/brick-workflows/resolve@v1
         with:
           turian-version: ${{ inputs.turian-version }}
           release-tag: ${{ github.ref_name }}
           brick-path: Bricks/brick/${{ inputs.brick-path }}
           store-url: ${{ inputs.store-url }}
-          store-token: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+          store-token: ${{ secrets.BRICKS_STORE_ACCESS_TOKEN }}
           twin: ${{ inputs.twin }}
           replay-directory: ${{ runner.temp }}/recorded-bricks
       - name: Retain verified recorded archives
@@ -169,7 +169,7 @@ jobs:
 
       - name: Build and test as a consumer
         id: build
-        uses: MASS4ORG/action-brick-build@v1
+        uses: MASS4ORG/brick-action-build@v1
         with:
           brick-path: ${{ inputs.brick-path }}
           precast: ${{ inputs.precast }}
@@ -233,6 +233,7 @@ jobs:
           name: qualified-brick
           path: |
             ${{ steps.build.outputs.directory }}/*.brick
+            ${{ steps.build.outputs.directory }}/build.json
             ${{ steps.build.outputs.directory }}/*qualification.json
             ${{ steps.build.outputs.directory }}/build.json
           if-no-files-found: error
@@ -261,7 +262,7 @@ jobs:
           printf '%s\n' "$QUALIFICATION" > qualified/qualification.json
           [[ -z "$TWIN_QUALIFICATION" ]] || printf '%s\n' "$TWIN_QUALIFICATION" > qualified/twin-qualification.json
 
-      - uses: MASS4ORG/action-brick-publish@v1
+      - uses: MASS4ORG/brick-action-publish@v1
         with:
           directory: qualified
           archive: ${{ needs.qualify.outputs.archive }}
@@ -270,5 +271,5 @@ jobs:
           twin-qualification: ${{ needs.qualify.outputs.twin-archive != '' && 'twin-qualification.json' || '' }}
           image: ${{ needs.image.outputs.image }}
           store-url: ${{ inputs.store-url }}
-          signing-key: ${{ secrets.MASS4_BRICKS_CI_SIGNING_KEY }}
-          store-token: ${{ secrets.MASS4_BRICKS_STORE_TOKEN }}
+          signing-key: ${{ secrets.BRICKS_SIGNING_KEY }}
+          store-token: ${{ secrets.BRICKS_STORE_ACCESS_TOKEN }}
